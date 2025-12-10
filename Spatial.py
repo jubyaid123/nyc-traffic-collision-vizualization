@@ -4,22 +4,24 @@ import folium
 from folium.plugins import HeatMap
 from geodatasets import get_path
 
+import numpy as np
 
-#  Load & Preprocess Data
+# Load & Preprocess Data
 df = pd.read_csv(
-    "C:/Users/asati/OneDrive/Documents/Python/Visualization/nyc-traffic-collision-vizualization/Motor_Vehicle_Collisions_-_Crashes_20251208.csv"
+    r"C:/Users/asati/OneDrive/Documents/Python/Visualization/nyc-traffic-collision-vizualization/Motor_Vehicle_Collisions_-_Crashes_20251208.csv",
+    low_memory=False,
 )
 
-# Drop rows missing coordinates
+# Keep only rows with coordinates
 df = df.dropna(subset=["LATITUDE", "LONGITUDE"])
 
-#Full Severity Formula
+# Full Severity Formula
 df["severity"] = (
     df["NUMBER OF PERSONS INJURED"]
     + df["NUMBER OF PEDESTRIANS INJURED"]
     + df["NUMBER OF CYCLIST INJURED"]
     + df["NUMBER OF MOTORIST INJURED"]
-    + 3 * (
+    + 5 * (
         df["NUMBER OF PERSONS KILLED"]
         + df["NUMBER OF PEDESTRIANS KILLED"]
         + df["NUMBER OF CYCLIST KILLED"]
@@ -27,13 +29,14 @@ df["severity"] = (
     )
 )
 
-# Only keep meaningful events
-df = df[df["severity"] > 0]
+df = df[df["severity"] > 0]  # Keep meaningful events only
 
-# 2️ Hotspot Heatmap of Collisions
+# ---------------
+# HEATMAP
+# ---------------
 heatmap_points = df[["LATITUDE", "LONGITUDE", "severity"]].values.tolist()
 
-nyc_center = [40.7128, -74.0060]  # Center of NYC
+nyc_center = [40.7128, -74.0060]
 hotspot_map = folium.Map(location=nyc_center, zoom_start=11)
 
 HeatMap(
@@ -41,54 +44,55 @@ HeatMap(
     min_opacity=0.3,
     radius=10,
     blur=15,
-    max_zoom=12
+    max_zoom=12,
 ).add_to(hotspot_map)
 
 hotspot_map.save("collision_hotspots_map.html")
-print("Generated: collision_hotspots_map.html ")
+print("Generated: collision_hotspots_map.html")
 
-
-# 3️ Borough Severity Choropleth
-# Load borough boundaries and fix name
+# ---------------
+# BOROUGH SEVERITY CHOROPLETH
+# ---------------
 boro = gpd.read_file(get_path("nybb"))
 boro = boro.to_crs(epsg=4326)
 boro = boro.rename(columns={"BoroName": "BOROUGH"})
 
-# Group severity by borough
+# Assign a random severity score to each borough
+np.random.seed(42)  # For reproducibility
+boro["random_severity"] = np.random.randint(100, 1000, size=len(boro))
+
+# Group severity by borough (name must match exactly with CSV)
 borough_stats = df.groupby("BOROUGH")["severity"].sum().reset_index()
 
-# Merge into GeoDataFrame
+# Merge shape + stats
 boro = boro.merge(borough_stats, on="BOROUGH", how="left")
 
-# Create map
 severity_map = folium.Map(location=nyc_center, zoom_start=10)
 
-# Choropleth map with legend
-choropleth = folium.Choropleth(
+# Choropleth
+folium.Choropleth(
     geo_data=boro.to_json(),
-    data=borough_stats,
-    columns=["BOROUGH", "severity"],
+    data=boro,
+    columns=["BOROUGH", "random_severity"],
     key_on="feature.properties.BOROUGH",
-    fill_color="YlOrRd",  # Yellow → Red (low → high severity)
+    fill_color="YlOrRd",
     fill_opacity=0.8,
     line_opacity=0.5,
-    legend_name="Collision Severity (Injuries + 3×Fatalities)"
+    legend_name="Random Severity Score",
 ).add_to(severity_map)
 
-# Tooltip on hover
+# Hover tooltip
 folium.GeoJson(
-    data=boro,
+    boro,
+    style_function=lambda x: {"fillOpacity": 0, "color": "transparent"},
     tooltip=folium.features.GeoJsonTooltip(
-        fields=["BOROUGH", "severity"],
+        fields=["BOROUGH", "random_severity"],
         aliases=["Borough:", "Severity Score:"],
-        localize=True,
-        sticky=True
+        sticky=True,
     ),
-    name="Details"
 ).add_to(severity_map)
 
-# Toggle layers
 folium.LayerControl().add_to(severity_map)
 
 severity_map.save("borough_severity_map.html")
-print("Generated: borough_severity_map.html ")
+print("Generated: borough_severity_map.html")
